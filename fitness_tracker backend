@@ -1,0 +1,209 @@
+# backend.py
+
+import psycopg2
+import pandas as pd
+import io
+from psycopg2 import sql
+from typing import Dict, Any
+
+# Database credentials
+DB_HOST = "localhost"
+DB_NAME = "fitness_tracker"
+DB_USER = "postgres"
+DB_PASSWORD = "abhiJHA2103@"
+
+
+def get_db_connection():
+    """Establish connection to PostgreSQL DB."""
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD
+        )
+        return conn
+    except psycopg2.OperationalError as e:
+        print(f"❌ Error connecting to database: {e}")
+        return None
+
+
+def test_connection():
+    """Test DB connection."""
+    conn = get_db_connection()
+    if conn:
+        print("✅ Database connection successful")
+        conn.close()
+    else:
+        print("❌ Database connection failed")
+
+
+def create_tables():
+    """Create tables for users, workouts, progress, goals, friends, leaderboard."""
+    conn = get_db_connection()
+    if not conn:
+        return
+
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id SERIAL PRIMARY KEY,
+                first_name VARCHAR(50),
+                last_name VARCHAR(50),
+                email VARCHAR(100) UNIQUE,
+                password VARCHAR(100),
+                age INT,
+                gender VARCHAR(10),
+                height_cm NUMERIC(5,2),
+                weight_kg NUMERIC(5,2),
+                fitness_level VARCHAR(50),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS workouts (
+                workout_id SERIAL PRIMARY KEY,
+                user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
+                workout_type VARCHAR(50),
+                duration_minutes INT,
+                calories_burned NUMERIC(10,2),
+                workout_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS progress (
+                progress_id SERIAL PRIMARY KEY,
+                user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
+                progress_date DATE NOT NULL,
+                weight_kg NUMERIC(5,2),
+                bmi NUMERIC(5,2),
+                steps INT,
+                heart_rate INT
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS goals (
+                goal_id SERIAL PRIMARY KEY,
+                user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
+                goal_type VARCHAR(50),
+                target_value NUMERIC(10,2),
+                start_date DATE NOT NULL,
+                end_date DATE,
+                achieved BOOLEAN DEFAULT FALSE
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS friend_connections (
+                connection_id SERIAL PRIMARY KEY,
+                user_id_1 INT REFERENCES users(user_id) ON DELETE CASCADE,
+                user_id_2 INT REFERENCES users(user_id) ON DELETE CASCADE,
+                status VARCHAR(20) DEFAULT 'pending'
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS leaderboard (
+                leaderboard_id SERIAL PRIMARY KEY,
+                user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
+                points NUMERIC(10,2) DEFAULT 0,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.commit()
+        print("✅ Tables created or already exist")
+    except Exception as error:
+        print(f"❌ Error creating tables: {error}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+def ingest_data_from_csv(table_name: str, csv_file_buffer: io.StringIO):
+    """Ingest CSV data into a given table."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+
+    cur = conn.cursor()
+    try:
+        csv_file_buffer.seek(0)
+        cur.copy_expert(f"""
+            COPY {table_name} FROM STDIN WITH CSV HEADER DELIMITER ','
+        """, csv_file_buffer)
+        conn.commit()
+        print(f"✅ Data ingested into {table_name}")
+        return True
+    except Exception as error:
+        print(f"❌ Error ingesting data: {error}")
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_user_metrics(user_id: int) -> Dict[str, Any]:
+    """Fetch key metrics for a user."""
+    conn = get_db_connection()
+    if not conn:
+        return {}
+
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(workout_id), SUM(calories_burned), AVG(duration_minutes)
+            FROM workouts
+            WHERE user_id = %s
+        """, (user_id,))
+        workout_count, total_calories, avg_duration = cur.fetchone()
+
+        cur.execute("""
+            SELECT weight_kg, bmi, steps, heart_rate
+            FROM progress
+            WHERE user_id = %s
+            ORDER BY progress_date DESC
+            LIMIT 1
+        """, (user_id,))
+        latest_progress = cur.fetchone()
+
+        metrics = {
+            "total_workouts": workout_count or 0,
+            "total_calories_burned": float(total_calories or 0),
+            "average_workout_duration": float(avg_duration or 0),
+            "latest_progress": {
+                "weight_kg": latest_progress[0] if latest_progress else None,
+                "bmi": latest_progress[1] if latest_progress else None,
+                "steps": latest_progress[2] if latest_progress else None,
+                "heart_rate": latest_progress[3] if latest_progress else None
+            }
+        }
+        return metrics
+    except Exception as error:
+        print(f"❌ Error fetching user metrics: {error}")
+        return {}
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_leaderboard(top_n: int = 10) -> pd.DataFrame:
+    """Return top N users by points."""
+    conn = get_db_connection()
+    if not conn:
+        return pd.DataFrame()
+
+    try:
+        query = f"""
+            SELECT u.user_id, u.first_name, u.last_name, l.points
+            FROM leaderboard l
+            JOIN users u ON l.user_id = u.user_id
+            ORDER BY l.points DESC
+            LIMIT {top_n};
+        """
+        df = pd.read_sql(query, conn)
+        return df
+    except Exception as error:
+        print(f"❌ Error fetching leaderboard: {error}")
+        return pd.DataFrame()
+    finally:
+        conn.close()
