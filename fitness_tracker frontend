@@ -1,0 +1,143 @@
+# app.py
+
+import streamlit as st
+import backend as db  # backend.py for fitness tracker
+import pandas as pd
+import io
+
+# ==============================================================================
+# Database Initialization
+# ==============================================================================
+st.title("🏃 Fitness Tracker Dashboard")
+st.markdown("A real-time dashboard to track workouts, progress, goals, and social leaderboard.")
+
+db.create_tables()
+
+# ==============================================================================
+# Data Ingestion (CREATE)
+# ==============================================================================
+st.header("Upload Fitness Data")
+st.markdown("Use this section to ingest new users, workouts, and progress data.")
+
+# --- Upload Users ---
+uploaded_users_file = st.file_uploader("Upload Users CSV", type="csv")
+if uploaded_users_file is not None:
+    users_df = pd.read_csv(uploaded_users_file)
+    st.dataframe(users_df.head())
+
+    if st.button("Ingest User Data"):
+        csv_buffer = io.StringIO(users_df.to_csv(index=False, header=False))
+        success = db.ingest_data_from_csv("users", csv_buffer)
+        if success:
+            st.success("User data ingested successfully!")
+        else:
+            st.error("Failed to ingest user data.")
+
+# --- Upload Workouts ---
+uploaded_workouts_file = st.file_uploader("Upload Workouts CSV", type="csv")
+if uploaded_workouts_file is not None:
+    workouts_df = pd.read_csv(uploaded_workouts_file)
+    st.dataframe(workouts_df.head())
+
+    if st.button("Ingest Workout Data"):
+        csv_buffer = io.StringIO(workouts_df.to_csv(index=False, header=False))
+        success = db.ingest_data_from_csv("workouts", csv_buffer)
+        if success:
+            st.success("Workout data ingested successfully!")
+        else:
+            st.error("Failed to ingest workout data.")
+
+# --- Upload Progress ---
+uploaded_progress_file = st.file_uploader("Upload Progress CSV", type="csv")
+if uploaded_progress_file is not None:
+    progress_df = pd.read_csv(uploaded_progress_file)
+    st.dataframe(progress_df.head())
+
+    if st.button("Ingest Progress Data"):
+        csv_buffer = io.StringIO(progress_df.to_csv(index=False, header=False))
+        success = db.ingest_data_from_csv("progress", csv_buffer)
+        if success:
+            st.success("Progress data ingested successfully!")
+        else:
+            st.error("Failed to ingest progress data.")
+
+st.markdown("---")
+
+# ==============================================================================
+# Key Metrics (READ)
+# ==============================================================================
+st.header("📊 Key Fitness Metrics")
+
+user_id_input = st.number_input("Enter User ID to view metrics", min_value=1, step=1)
+if st.button("Get User Metrics"):
+    metrics = db.get_user_metrics(user_id_input)
+    if metrics:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Workouts", metrics['total_workouts'])
+        with col2:
+            st.metric("Total Calories Burned", f"{metrics['total_calories_burned']:.2f}")
+        with col3:
+            st.metric("Avg. Workout Duration (min)", f"{metrics['average_workout_duration']:.2f}")
+
+        st.subheader("Latest Progress")
+        st.json(metrics['latest_progress'])
+    else:
+        st.warning("No data found for this user.")
+
+st.markdown("---")
+
+# ==============================================================================
+# Dynamic Dashboard & Visualization (READ)
+# ==============================================================================
+st.header("📈 Workout Summary Dashboard")
+
+dashboard_option = st.selectbox(
+    "Visualize workouts by:",
+    options=["workout_type", "workout_date"]
+)
+
+metric_option = st.selectbox(
+    "Metric to visualize:",
+    options=["duration_minutes", "calories_burned"]
+)
+
+# Simple aggregation for visualization
+conn = db.get_db_connection()
+if conn:
+    try:
+        query = f"""
+            SELECT {dashboard_option}, SUM({metric_option}) as metric
+            FROM workouts
+            GROUP BY {dashboard_option}
+            ORDER BY metric DESC;
+        """
+        dashboard_df = pd.read_sql(query, conn)
+        if not dashboard_df.empty:
+            st.bar_chart(dashboard_df.set_index(dashboard_option))
+            st.dataframe(dashboard_df)
+        else:
+            st.warning("No workout data available for the selected visualization.")
+    except Exception as e:
+        st.error(f"Error fetching dashboard data: {e}")
+    finally:
+        conn.close()
+
+st.markdown("---")
+
+# ==============================================================================
+# Leaderboard (READ)
+# ==============================================================================
+st.header("🏅 Leaderboard")
+
+top_n = st.slider("Select top N users", min_value=5, max_value=20, value=10, step=1)
+leaderboard_df = db.get_leaderboard(top_n)
+
+if not leaderboard_df.empty:
+    st.subheader(f"Top {top_n} Users by Points")
+    st.dataframe(leaderboard_df)
+else:
+    st.warning("No leaderboard data available.")
+
+st.markdown("---")
+st.caption("Application powered by Streamlit and PostgreSQL. Track workouts, progress, goals, and social leaderboard.")
