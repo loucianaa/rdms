@@ -1,0 +1,112 @@
+-- ==========================
+-- Database: fitness_tracker
+-- ==========================
+-- Create schema (optional)
+CREATE SCHEMA IF NOT EXISTS fitness;
+
+-- ==========================
+-- Table: users
+-- ==========================
+CREATE TABLE fitness.users (
+    user_id SERIAL PRIMARY KEY,
+    first_name VARCHAR(50) NOT NULL,
+    last_name VARCHAR(50) NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    password VARCHAR(100) NOT NULL,
+    age INT,
+    gender VARCHAR(10),
+    height_cm NUMERIC(5,2),
+    weight_kg NUMERIC(5,2),
+    fitness_level VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ==========================
+-- Table: workouts
+-- ==========================
+CREATE TABLE fitness.workouts (
+    workout_id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES fitness.users(user_id) ON DELETE CASCADE,
+    workout_type VARCHAR(50) NOT NULL,
+    duration_minutes INT NOT NULL CHECK (duration_minutes > 0),
+    calories_burned NUMERIC(10,2),
+    workout_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ==========================
+-- Table: progress
+-- ==========================
+CREATE TABLE fitness.progress (
+    progress_id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES fitness.users(user_id) ON DELETE CASCADE,
+    progress_date DATE NOT NULL,
+    weight_kg NUMERIC(5,2),
+    bmi NUMERIC(5,2),
+    steps INT,
+    heart_rate INT
+);
+
+-- ==========================
+-- Table: goals
+-- ==========================
+CREATE TABLE fitness.goals (
+    goal_id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES fitness.users(user_id) ON DELETE CASCADE,
+    goal_type VARCHAR(50) NOT NULL,
+    target_value NUMERIC(10,2) NOT NULL,
+    start_date DATE NOT NULL,
+    end_date DATE,
+    achieved BOOLEAN DEFAULT FALSE
+);
+
+-- ==========================
+-- Table: friend_connections
+-- ==========================
+CREATE TABLE fitness.friend_connections (
+    connection_id SERIAL PRIMARY KEY,
+    user_id_1 INT REFERENCES fitness.users(user_id) ON DELETE CASCADE,
+    user_id_2 INT REFERENCES fitness.users(user_id) ON DELETE CASCADE,
+    status VARCHAR(20) DEFAULT 'pending' -- pending, accepted, rejected
+);
+
+-- ==========================
+-- Table: leaderboard (optional)
+-- ==========================
+CREATE TABLE fitness.leaderboard (
+    leaderboard_id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES fitness.users(user_id) ON DELETE CASCADE,
+    points NUMERIC(10,2) DEFAULT 0,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ==========================
+-- Indexes for performance
+-- ==========================
+CREATE INDEX idx_workouts_user ON fitness.workouts(user_id);
+CREATE INDEX idx_progress_user ON fitness.progress(user_id);
+CREATE INDEX idx_goals_user ON fitness.goals(user_id);
+
+-- ==========================
+-- Sample data
+-- ==========================
+INSERT INTO fitness.users (first_name, last_name, email, password, age, gender, height_cm, weight_kg, fitness_level)
+VALUES 
+('John', 'Doe', 'john.doe@example.com', 'password123', 30, 'Male', 175.0, 70.0, 'Intermediate'),
+('Jane', 'Smith', 'jane.smith@example.com', 'password123', 28, 'Female', 165.0, 60.0, 'Beginner');
+
+INSERT INTO fitness.workouts (user_id, workout_type, duration_minutes, calories_burned)
+VALUES
+(1, 'Running', 30, 300.0),
+(2, 'Yoga', 45, 150.0);
+
+INSERT INTO fitness.progress (user_id, progress_date, weight_kg, bmi, steps, heart_rate)
+VALUES
+(1, '2025-08-21', 70.0, 22.9, 8000, 75),
+(2, '2025-08-21', 60.0, 22.0, 5000, 72);
+
+INSERT INTO fitness.goals (user_id, goal_type, target_value, start_date, end_date)
+VALUES
+(1, 'Steps', 10000, '2025-08-01', '2025-08-31'),
+(2, 'Weight Loss', 58.0, '2025-08-01', '2025-08-31');
+
+SELECT * FROM fitness.users;
