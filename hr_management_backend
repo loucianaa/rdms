@@ -1,0 +1,200 @@
+# backend.py
+
+import psycopg2
+import pandas as pd
+import io
+from psycopg2 import sql
+from typing import Dict, Any
+
+# Database credentials
+DB_HOST = "localhost"
+DB_NAME = "hr_management"
+DB_USER = "postgres"
+DB_PASSWORD = "abhiJHA2103@"
+
+
+def get_db_connection():
+    """Establish connection to PostgreSQL DB."""
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD
+        )
+        return conn
+    except psycopg2.OperationalError as e:
+        print(f"❌ Error connecting to database: {e}")
+        return None
+
+
+def test_connection():
+    """Test DB connection."""
+    conn = get_db_connection()
+    if conn:
+        print("✅ Database connection successful")
+        conn.close()
+    else:
+        print("❌ Database connection failed")
+
+
+def create_tables():
+    """Create tables for employees, attendance, performance, payroll."""
+    conn = get_db_connection()
+    if not conn:
+        return
+
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS employees (
+                employee_id SERIAL PRIMARY KEY,
+                first_name VARCHAR(50),
+                last_name VARCHAR(50),
+                email VARCHAR(100) UNIQUE,
+                password VARCHAR(100),
+                age INT,
+                gender VARCHAR(10),
+                department VARCHAR(50),
+                role VARCHAR(50),
+                hire_date DATE,
+                salary NUMERIC(12,2),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS attendance (
+                attendance_id SERIAL PRIMARY KEY,
+                employee_id INT REFERENCES employees(employee_id) ON DELETE CASCADE,
+                attendance_date DATE NOT NULL,
+                status VARCHAR(20) DEFAULT 'Present'
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS performance_reviews (
+                review_id SERIAL PRIMARY KEY,
+                employee_id INT REFERENCES employees(employee_id) ON DELETE CASCADE,
+                review_date DATE NOT NULL,
+                performance_score NUMERIC(5,2),
+                feedback TEXT
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS payroll (
+                payroll_id SERIAL PRIMARY KEY,
+                employee_id INT REFERENCES employees(employee_id) ON DELETE CASCADE,
+                pay_month DATE NOT NULL,
+                basic_salary NUMERIC(12,2),
+                bonuses NUMERIC(12,2),
+                deductions NUMERIC(12,2),
+                net_salary NUMERIC(12,2) GENERATED ALWAYS AS (basic_salary + bonuses - deductions) STORED
+            );
+        """)
+        conn.commit()
+        print("✅ Tables created or already exist")
+    except Exception as error:
+        print(f"❌ Error creating tables: {error}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+def ingest_data_from_csv(table_name: str, csv_file_buffer: io.StringIO):
+    """Ingest CSV data into a given table."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+
+    cur = conn.cursor()
+    try:
+        csv_file_buffer.seek(0)
+        cur.copy_expert(f"""
+            COPY {table_name} FROM STDIN WITH CSV HEADER DELIMITER ','
+        """, csv_file_buffer)
+        conn.commit()
+        print(f"✅ Data ingested into {table_name}")
+        return True
+    except Exception as error:
+        print(f"❌ Error ingesting data: {error}")
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_employee_metrics(employee_id: int) -> Dict[str, Any]:
+    """Fetch key metrics for a single employee."""
+    conn = get_db_connection()
+    if not conn:
+        return {}
+
+    try:
+        cur = conn.cursor()
+
+        # Attendance metrics
+        cur.execute("""
+            SELECT COUNT(attendance_id), SUM(CASE WHEN status='Present' THEN 1 ELSE 0 END)
+            FROM attendance
+            WHERE employee_id = %s
+        """, (employee_id,))
+        total_days, present_days = cur.fetchone()
+
+        # Performance metrics
+        cur.execute("""
+            SELECT AVG(performance_score)
+            FROM performance_reviews
+            WHERE employee_id = %s
+        """, (employee_id,))
+        avg_score = cur.fetchone()[0]
+
+        # Latest payroll
+        cur.execute("""
+            SELECT pay_month, net_salary
+            FROM payroll
+            WHERE employee_id = %s
+            ORDER BY pay_month DESC
+            LIMIT 1
+        """, (employee_id,))
+        latest_payroll = cur.fetchone()
+
+        metrics = {
+            "total_days_recorded": total_days or 0,
+            "days_present": present_days or 0,
+            "average_performance_score": float(avg_score or 0),
+            "latest_payroll": {
+                "pay_month": str(latest_payroll[0]) if latest_payroll else None,
+                "net_salary": float(latest_payroll[1]) if latest_payroll else None
+            }
+        }
+        return metrics
+    except Exception as error:
+        print(f"❌ Error fetching employee metrics: {error}")
+        return {}
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_top_performers(top_n: int = 10) -> pd.DataFrame:
+    """Return top N employees by performance score."""
+    conn = get_db_connection()
+    if not conn:
+        return pd.DataFrame()
+
+    try:
+        query = f"""
+            SELECT e.employee_id, e.first_name, e.last_name, AVG(p.performance_score) AS avg_score
+            FROM employees e
+            JOIN performance_reviews p ON e.employee_id = p.employee_id
+            GROUP BY e.employee_id
+            ORDER BY avg_score DESC
+            LIMIT {top_n};
+        """
+        df = pd.read_sql(query, conn)
+        return df
+    except Exception as error:
+        print(f"❌ Error fetching top performers: {error}")
+        return pd.DataFrame()
+    finally:
+        conn.close()
