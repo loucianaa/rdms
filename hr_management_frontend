@@ -1,0 +1,159 @@
+# app.py
+
+import streamlit as st
+import backend as db  # backend.py for HR Management
+import pandas as pd
+import io
+
+# ==============================================================================  
+# Database Initialization  
+# ==============================================================================  
+st.title("👔 HR Management Dashboard")
+st.markdown("A real-time dashboard to manage employees, attendance, leaves, payroll, and performance.")
+
+db.create_tables()
+
+# ==============================================================================  
+# Data Ingestion (CREATE)  
+# ==============================================================================  
+st.header("Upload HR Data")
+st.markdown("Use this section to ingest new employee, attendance, leave, and payroll data.")
+
+# --- Upload Employees ---  
+uploaded_employees_file = st.file_uploader("Upload Employees CSV", type="csv")
+if uploaded_employees_file is not None:
+    employees_df = pd.read_csv(uploaded_employees_file)
+    st.dataframe(employees_df.head())
+
+    if st.button("Ingest Employee Data"):
+        csv_buffer = io.StringIO(employees_df.to_csv(index=False, header=False))
+        success = db.ingest_data_from_csv("employees", csv_buffer)
+        if success:
+            st.success("Employee data ingested successfully!")
+        else:
+            st.error("Failed to ingest employee data.")
+
+# --- Upload Attendance ---  
+uploaded_attendance_file = st.file_uploader("Upload Attendance CSV", type="csv")
+if uploaded_attendance_file is not None:
+    attendance_df = pd.read_csv(uploaded_attendance_file)
+    st.dataframe(attendance_df.head())
+
+    if st.button("Ingest Attendance Data"):
+        csv_buffer = io.StringIO(attendance_df.to_csv(index=False, header=False))
+        success = db.ingest_data_from_csv("attendance", csv_buffer)
+        if success:
+            st.success("Attendance data ingested successfully!")
+        else:
+            st.error("Failed to ingest attendance data.")
+
+# --- Upload Leave Requests ---  
+uploaded_leave_file = st.file_uploader("Upload Leave Requests CSV", type="csv")
+if uploaded_leave_file is not None:
+    leave_df = pd.read_csv(uploaded_leave_file)
+    st.dataframe(leave_df.head())
+
+    if st.button("Ingest Leave Data"):
+        csv_buffer = io.StringIO(leave_df.to_csv(index=False, header=False))
+        success = db.ingest_data_from_csv("leave_requests", csv_buffer)
+        if success:
+            st.success("Leave requests ingested successfully!")
+        else:
+            st.error("Failed to ingest leave data.")
+
+# --- Upload Payroll ---  
+uploaded_payroll_file = st.file_uploader("Upload Payroll CSV", type="csv")
+if uploaded_payroll_file is not None:
+    payroll_df = pd.read_csv(uploaded_payroll_file)
+    st.dataframe(payroll_df.head())
+
+    if st.button("Ingest Payroll Data"):
+        csv_buffer = io.StringIO(payroll_df.to_csv(index=False, header=False))
+        success = db.ingest_data_from_csv("payroll", csv_buffer)
+        if success:
+            st.success("Payroll data ingested successfully!")
+        else:
+            st.error("Failed to ingest payroll data.")
+
+st.markdown("---")
+
+# ==============================================================================  
+# Key Metrics (READ)  
+# ==============================================================================  
+st.header("📊 Employee Metrics")
+
+employee_id_input = st.number_input("Enter Employee ID", min_value=1, step=1)
+if st.button("Get Employee Metrics"):
+    metrics = db.get_employee_metrics(employee_id_input)
+    if metrics:
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Attendance Days", metrics['attendance_days'])
+        with col2:
+            st.metric("Leave Balance", metrics['leave_balance'])
+        with col3:
+            st.metric("Salary", f"${metrics['salary']:.2f}")
+        with col4:
+            st.metric("Performance Rating", metrics['performance_rating'])
+
+        st.subheader("Latest Leave Requests")
+        st.dataframe(metrics['latest_leaves'])
+    else:
+        st.warning("No data found for this employee.")
+
+st.markdown("---")
+
+# ==============================================================================  
+# Dashboard & Visualization (READ)  
+# ==============================================================================  
+st.header("📈 HR Dashboard Overview")
+
+dashboard_option = st.selectbox(
+    "Visualize data by:",
+    options=["department", "job_title"]
+)
+
+metric_option = st.selectbox(
+    "Metric to visualize:",
+    options=["attendance_days", "leave_count", "salary"]
+)
+
+conn = db.get_db_connection()
+if conn:
+    try:
+        query = f"""
+            SELECT {dashboard_option}, SUM({metric_option}) as metric
+            FROM employees e
+            LEFT JOIN attendance a ON e.employee_id = a.employee_id
+            GROUP BY {dashboard_option}
+            ORDER BY metric DESC;
+        """
+        dashboard_df = pd.read_sql(query, conn)
+        if not dashboard_df.empty:
+            st.bar_chart(dashboard_df.set_index(dashboard_option))
+            st.dataframe(dashboard_df)
+        else:
+            st.warning("No HR data available for the selected visualization.")
+    except Exception as e:
+        st.error(f"Error fetching dashboard data: {e}")
+    finally:
+        conn.close()
+
+st.markdown("---")
+
+# ==============================================================================  
+# Leaderboard / Top Performers (READ)  
+# ==============================================================================  
+st.header("🏆 Top Performers")
+
+top_n = st.slider("Select top N employees", min_value=5, max_value=20, value=10, step=1)
+leaderboard_df = db.get_top_performers(top_n)
+
+if not leaderboard_df.empty:
+    st.subheader(f"Top {top_n} Employees by Performance Rating")
+    st.dataframe(leaderboard_df)
+else:
+    st.warning("No performance data available.")
+
+st.markdown("---")
+st.caption("Application powered by Streamlit and PostgreSQL. Manage employees, attendance, leaves, payroll, and performance.")
